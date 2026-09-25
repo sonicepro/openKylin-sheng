@@ -66,7 +66,10 @@ openKylin 2.0（nile）基础是 **Debian 13 系**（`base-files 13-ok2.2`、`sy
 | **rootfs_size** | 自动（回退 `36G`） | image 模式按 ISO 的 `filesystem.size` 自动算（约 31 GiB + 余量）；构建后收缩，首启 `x-systemd.growfs` 扩容 |
 | **compress_image** | `zstd` | 构建后压缩 `rootfs.img`（`zstd` 快 / `xz` 更小，约 4×）；刷写前需先解压：`zstd -d` 或 `xz -d` |
 | **shrink_image** | `true` | 构建后 `e2fsck -fy` + `resize2fs -M` 收缩 |
-| **upload_artifacts** | `true` | 设为 `false` 只验证流程、不产出 Artifact |
+| **upload_artifacts** | `true` | 上传到 Actions Artifact（临时，14 天） |
+| **create_release** | `true` | 发布到 GitHub Release（持久）。因单附件上限 2 GiB，大镜像会自动分片 `*.part-*` |
+| **release_tag** | *(自动)* | 留空则用 `openkylin-<系列>-<桌面>-<分区>`；同名 Release 则更新附件 |
+| **release_prerelease** | `true` | 标记为 pre-release（实验性端口建议开） |
 
 ## 目录结构
 
@@ -96,7 +99,17 @@ scripts/
 ## 构建
 
 在 GitHub 上 Actions → **Build RootFS (openKylin)** → Run workflow，选择参数即可
-（需要 arm64 runner `ubuntu-24.04-arm`）。产物为 `rootfs-openkylin-*.img` 与 `boot-openkylin-*.img`。
+（需要 arm64 runner `ubuntu-24.04-arm`）。
+
+产物会：
+- 上传为 Actions Artifact（临时）；
+- **发布到 GitHub Release**（`create_release=true`，默认）——附件为 `boot.img` + `rootfs.img.zst`。
+  因 Release 单附件上限 **2 GiB**，约 7 GiB 的镜像会自动分片成 `rootfs.img.zst.part-00…`；
+  下载后先合并再解压：
+  ```bash
+  cat rootfs.img.zst.part-* > rootfs.img.zst
+  zstd -d rootfs.img.zst        # 得到 rootfs.img
+  ```
 
 **本地构建**（需 arm64 主机 + root + 联网）：
 

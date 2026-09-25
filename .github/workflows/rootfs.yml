@@ -156,13 +156,28 @@ on:
           - 'xz'
           - 'none'
       upload_artifacts:
-        description: '上传 rootfs.img / boot.img（测试时可关闭）'
+        description: '上传 rootfs.img / boot.img 到 Actions Artifact（测试时可关闭）'
+        required: false
+        type: boolean
+        default: true
+      create_release:
+        description: '把产物发布到 GitHub Release（单文件上限 2GiB，大镜像会自动分片）'
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Release tag（留空则自动用 openkylin-<系列>-<桌面>-<分区>；同名则更新附件）'
+        required: false
+        type: string
+        default: ''
+      release_prerelease:
+        description: '标记为 pre-release（实验性端口建议开启）'
         required: false
         type: boolean
         default: true
 
 permissions:
-  contents: read
+  contents: write   # 发布 Release 需要
   actions: read
   packages: read
 
@@ -504,6 +519,67 @@ jobs:
           retention-days: 14
           compression-level: 1
           if-no-files-found: warn
+
+      - name: Prepare release assets
+        if: success() && inputs.create_release
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          if [ "${{ inputs.compress_image }}" = "none" ]; then IMG="rootfs.img"
+          elif [ "${{ inputs.compress_image }}" = "xz" ]; then IMG="rootfs.img.xz"
+          else IMG="rootfs.img.zst"; fi
+          echo "镜像文件: $IMG ($(du -h "$IMG" | cut -f1))"
+          # GitHub Release 单附件上限 2GiB → 超过就分片为 <1900MiB 的 part-*
+          LIMIT=$((1900 * 1024 * 1024))
+          SZ="$(stat -c%s "$IMG")"
+          if [ "$SZ" -gt "$LIMIT" ]; then
+            echo "超过 2GiB，分片"
+            split -b 1900M -d -a 2 "$IMG" "release-assets/$(basename "$IMG").part-"
+          else
+            cp "$IMG" release-assets/
+          fi
+          cp boot.img release-assets/
+          ls -lh release-assets/ | sed 's/^/    /'
+
+      - name: Publish to GitHub Release
+        if: success() && inputs.create_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.release_tag }}"
+          [ -n "$TAG" ] || TAG="openkylin-${{ steps.parse.outputs.series }}-${{ steps.parse.outputs.desktop_slug }}-${{ steps.parse.outputs.label }}"
+          PRE=""
+          [ "${{ inputs.release_prerelease }}" = "true" ] && PRE="--prerelease" || true
+          echo "Release tag: $TAG"
+          cat > /tmp/notes.md <<'EOF'
+          为小米平板 6S Pro（sheng / SM8550）构建的 openKylin arm64 镜像。
+
+          **附件**
+          - `boot.img` — sheng 内核 boot 镜像
+          - `rootfs.img`（或 `.zst`/`.xz`，或分片 `.part-*`）— 系统镜像
+
+          **刷写前处理**
+          - 分片（`.part-*`）：先合并  `cat rootfs.img.*.part-* > rootfs.img.*`
+          - 压缩（`.zst`/`.xz`）：先解压  `zstd -d rootfs.img.zst`  或  `xz -d rootfs.img.xz`
+
+          **刷写**（详见 Xiaomi-pad-6s-pro-Linux 安装指南）
+          - 双系统：`fastboot flash linux rootfs.img` + `fastboot flash boot_b boot.img`
+          - 单系统：分区名用 `userdata`
+          - 首启后 `sudo resize2fs /dev/sda30`（或对应分区）
+          EOF
+          {
+            echo ""
+            echo "---"
+            echo "- openKylin: ${{ steps.parse.outputs.series }} / 桌面: ${{ inputs.desktop }} / 分区: ${{ steps.parse.outputs.label }}"
+            echo "- 内核: ${{ inputs.kernel_source }} (${{ inputs.kernel_release }})"
+          } >> /tmp/notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，更新附件（--clobber）"
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md $PRE release-assets/*
+          fi
 
       - name: Build Summary
         if: always()
