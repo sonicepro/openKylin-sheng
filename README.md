@@ -64,6 +64,7 @@ openKylin 2.0（nile）基础是 **Debian 13 系**（`base-files 13-ok2.2`、`sy
 | **kernel_release** | `7.2.6` | `prebuilt` 取哪个 release（留空取最新） |
 | **firmware_repo / firmware_branch** | `ianchb/sheng-firmware` / `master` | 设备固件来源 |
 | **compress_image** | `zstd` | 构建后压缩 `rootfs.img`（`zstd` 快 / `xz` 更小，约 4×）；刷写前需先解压：`zstd -d` 或 `xz -d` |
+| **slim_kylin_ai** | `false` | 精简：卸载 kylin AI/模型包（约省 3+ GiB，构建更快）；设备上 `/root/restore-kylin-ai.sh`（Release 也附）可一键装回 |
 | **shrink_image** | `true` | 构建后 `e2fsck -fy` + `resize2fs -M` 收缩 |
 | **upload_artifacts** | `true` | 上传到 Actions Artifact（临时，14 天） |
 | **create_release** | `true` | 发布到 GitHub Release（持久）。因单附件上限 2 GiB，大镜像会自动分片 `*.part-*` |
@@ -141,7 +142,8 @@ sudo scripts/host/04-finalize-image.sh rootfs.img /mnt/rootfs
 
 仍较慢的环节：`unsquashfs` 解包 ~31 GiB、最终压缩与上传。`e2fsck`/`resize2fs -M` 收缩默认
 **关闭**（`shrink_image=false`）—— 31 GiB 近满盘上收缩很慢、收益极小；需要紧凑镜像时再打开。
-想大幅缩短，可加「精简」删掉 kylin AI 模型，把镜像从 ~31 GiB 缩到 ~10 GiB。
+想大幅缩短：打开 **`slim_kylin_ai`** —— 卸载 kylin AI/模型包，镜像明显变小、构建更快；
+镜像内 `/root/restore-kylin-ai.sh`（Release 也附）可一键装回这些包。
 
 ## 许可与第三方组件
 

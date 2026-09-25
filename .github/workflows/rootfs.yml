@@ -150,6 +150,11 @@ on:
           - 'zstd'
           - 'xz'
           - 'none'
+      slim_kylin_ai:
+        description: '精简：卸载 kylin AI/模型包（约省 3+ GiB；设备上可用 /root/restore-kylin-ai.sh 装回）'
+        required: false
+        type: boolean
+        default: false
       upload_artifacts:
         description: '上传 rootfs.img / boot.img 到 Actions Artifact（默认关；Release 为正式产物，重复上传白耗时间）'
         required: false
@@ -420,6 +425,7 @@ jobs:
           BOOT_MODE='${{ inputs.boot_mode }}'
           PARTITION_LABEL='${{ steps.parse.outputs.label }}'
           KERNEL_SOURCE='${{ inputs.kernel_source }}'
+          SLIM_KYLIN_AI='${{ inputs.slim_kylin_ai }}'
           EOF
           sudo chmod 600 "$ROOTFS_MOUNT/root/build.env"
           echo "build.env 内容："
@@ -452,8 +458,22 @@ jobs:
       - name: "[chroot] Configure System"
         run: sudo chroot "$ROOTFS_MOUNT" /root/ok-build/in-chroot/40-system-config.sh
 
+      - name: "[chroot] Slim (drop kylin AI)"
+        if: inputs.slim_kylin_ai
+        run: sudo chroot "$ROOTFS_MOUNT" /root/ok-build/in-chroot/06-slim.sh
+
       - name: "[chroot] Verify Image"
         run: sudo chroot "$ROOTFS_MOUNT" /root/ok-build/in-chroot/90-verify.sh
+
+      - name: Collect slim restore script
+        if: always()
+        run: |
+          if [ -f "$ROOTFS_MOUNT/root/restore-kylin-ai.sh" ]; then
+            sudo cp "$ROOTFS_MOUNT/root/restore-kylin-ai.sh" ./restore-kylin-ai.sh
+            sudo chown "$(id -u):$(id -g)" ./restore-kylin-ai.sh
+            echo "已收集 restore-kylin-ai.sh"
+            cat ./restore-kylin-ai.sh | head -n 5 | sed 's/^/    /'
+          fi
 
       - name: Cleanup Host Files
         if: always()
@@ -524,6 +544,7 @@ jobs:
             cp "$IMG" release-assets/
           fi
           cp boot.img release-assets/
+          [ -f restore-kylin-ai.sh ] && cp restore-kylin-ai.sh release-assets/ || true
           ls -lh release-assets/ | sed 's/^/    /'
 
       - name: Publish to GitHub Release
@@ -557,6 +578,9 @@ jobs:
             echo "---"
             echo "- openKylin: ${{ steps.parse.outputs.series }} / 桌面: ${{ inputs.desktop }} / 分区: ${{ steps.parse.outputs.label }}"
             echo "- 内核: ${{ inputs.kernel_source }} (${{ inputs.kernel_release }})"
+            if [ "${{ inputs.slim_kylin_ai }}" = "true" ]; then
+              echo "- **已精简**：移除了 kylin AI/模型包；装回运行附件 restore-kylin-ai.sh"
+            fi
           } >> /tmp/notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG 已存在，更新附件（--clobber）"

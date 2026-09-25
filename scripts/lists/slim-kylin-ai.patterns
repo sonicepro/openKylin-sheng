@@ -1,0 +1,38 @@
+# ok-build：精简（slim_kylin_ai=true）时要卸载的包名正则（逐行，作用于 dpkg 已装包名）
+# 只针对 kylin/openKylin 的 AI 子系统、本地模型（onnx 权重）、AI 引擎与语音/手势交互。
+# 被移除的包会被记进 /root/restore-kylin-ai.sh，设备上可一键装回。
+
+# kylin AI 子系统 / 运行时 / 助手
+^kylin-ai
+^kylin-aiassistant
+^ai-kylin
+
+# 本地模型（onnx 权重等）
+^kylin-.*-model
+^kylin-datamanagement-models
+^kylin-model-management
+
+# AI 引擎库（baidu/xunfei/qwen/deepseek/sensetime/ondevice/custom）
+^libkylin-ai
+^libkylin-ondevice
+^libkylin-baidu
+^libkylin-xunfei
+^libkylin-qwen
+^libkylin-deepseek
+^libkylin-sensetime
+^libkylin-custom-(ai|nlp)
+^libkylin-.*-(nlp|speech|vision|embedding)-engine
+
+# 具体模型 / 功能
+^kylin-cn-clip
+^kylin-gte-base
+^kylin-sam-model
+^kylin-speech-(asr|tts)
+^kylin-portrait-matting
+^kylin-universal-matting
+^kylin-paddle-ocr
+
+# 手势 / 语音交互 / 机器人
+^ukui-air-gesture
+^ukui-voice-wing
+^kylin-bot
