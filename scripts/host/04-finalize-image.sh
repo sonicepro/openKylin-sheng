@@ -26,9 +26,11 @@ umount -R "$MOUNT" 2>/dev/null || umount "$MOUNT" 2>/dev/null || warn "挂载点
 sync
 log "镜像已卸载"
 
-e2fsck -fy "$IMAGE" >/dev/null 2>&1 || warn "e2fsck 报告了问题（已尝试修复）"
-
+# 注意：e2fsck + resize2fs -M 在 31 GiB 近满盘上非常慢（可能几十分钟），且收益极小
+# （几乎无可收缩空间）。默认只在显式开启 shrink_image 时才做。
 if [[ "$SHRINK_IMAGE" == "true" ]]; then
+  log "e2fsck + resize2fs -M 收缩（31 GiB 上较慢）..."
+  e2fsck -fy "$IMAGE" >/dev/null 2>&1 || warn "e2fsck 报告了问题（已尝试修复）"
   before="$(du -h --apparent-size "$IMAGE" | cut -f1)"
   if resize2fs -M "$IMAGE" >/dev/null 2>&1; then
     # 把文件本身截断到文件系统实际大小（resize2fs -M 只缩文件系统不缩文件）

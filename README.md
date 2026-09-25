@@ -139,8 +139,9 @@ sudo scripts/host/04-finalize-image.sh rootfs.img /mnt/rootfs
 - **上传**：默认只发 **Release**（`upload_artifacts=false`），不再把 7 GB 产物重复传一遍 Actions Artifact。
 - **诊断**：每步日志带时间戳（`[脚本 HH:MM:SS] ...`），一眼看出哪一步慢。
 
-仍较慢、难避免的环节：`unsquashfs` 解包 ~31 GiB、`e2fsck`/`resize2fs -M` 收缩、最终压缩与上传。
-若想大幅缩短，可后续加「精简（删 kylin AI 模型）」把镜像缩到 ~10 GiB。
+仍较慢的环节：`unsquashfs` 解包 ~31 GiB、最终压缩与上传。`e2fsck`/`resize2fs -M` 收缩默认
+**关闭**（`shrink_image=false`）—— 31 GiB 近满盘上收缩很慢、收益极小；需要紧凑镜像时再打开。
+想大幅缩短，可加「精简」删掉 kylin AI 模型，把镜像从 ~31 GiB 缩到 ~10 GiB。
 
 ## 许可与第三方组件
 

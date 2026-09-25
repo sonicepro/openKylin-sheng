@@ -137,10 +137,10 @@ on:
         type: string
         default: 'master'
       shrink_image:
-        description: '构建后收缩镜像（e2fsck + resize2fs -M）'
+        description: '构建后收缩镜像（e2fsck + resize2fs -M）；31GiB 近满盘上很慢，默认关'
         required: false
         type: boolean
-        default: true
+        default: false
       compress_image:
         description: '构建后压缩 rootfs.img（zstd 快 / xz 更小 / none）；刷写前需解压：zstd -d 或 xz -d'
         required: false
