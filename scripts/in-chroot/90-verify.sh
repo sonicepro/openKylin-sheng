@@ -44,6 +44,18 @@ else
   fail "fstab 不符合预期: $(tr '\n' ' ' < /etc/fstab 2>/dev/null)"
 fi
 
+# 2b) systemd 系统用户/组（sysusers）必须已生成，否则设备首启 systemd-tmpfiles 报错
+if grep -qE "^systemd-network:" /etc/passwd 2>/dev/null; then
+  pass "systemd 用户存在: systemd-network"
+else
+  fail "缺少系统用户 systemd-network（设备首启会报 Failed to resolve user）"
+fi
+if grep -qE "^systemd-journal:" /etc/group 2>/dev/null; then
+  pass "systemd 组存在: systemd-journal"
+else
+  fail "缺少系统组 systemd-journal（设备首启会报 Failed to resolve group）"
+fi
+
 # 3) 设备功能包关键文件
 for f in /usr/bin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/ssccli \
          /usr/lib/systemd/system/adsprpcd-sensorspd.service \

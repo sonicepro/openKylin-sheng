@@ -140,6 +140,21 @@ EOF
 : > /etc/machine-id
 
 # ---------------------------------------------------------------------------
+# 8b) systemd 系统用户/组（sysusers）
+#     systemd-network / systemd-journal 等由 /usr/lib/sysusers.d/*.conf 定义，
+#     正常由 systemd-sysusers 生成。chroot 构建里若没跑这一步，设备首启
+#     systemd-tmpfiles 会报 "Failed to resolve user 'systemd-network'" /
+#     "Failed to resolve group 'systemd-journal'"。这里显式生成，把它们烘进
+#     /etc/passwd、/etc/group（幂等，已存在则跳过）。
+# ---------------------------------------------------------------------------
+log "生成 systemd 系统用户/组（sysusers）"
+if command -v systemd-sysusers >/dev/null 2>&1; then
+  systemd-sysusers || warn "systemd-sysusers 返回非 0（系统用户可能不完整）"
+else
+  warn "找不到 systemd-sysusers，跳过（设备上 systemd-sysusers.service 会兜底）"
+fi
+
+# ---------------------------------------------------------------------------
 # 9) 清理
 # ---------------------------------------------------------------------------
 log "清理 apt 缓存"
