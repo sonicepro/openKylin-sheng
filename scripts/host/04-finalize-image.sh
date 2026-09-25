@@ -5,8 +5,9 @@
 # x-systemd.growfs 扩到分区实际大小。
 #
 # 环境变量：
-#   FS_UUID       要写入的文件系统 UUID（默认沿用上游固定值）
-#   SHRINK_IMAGE  true/false，默认 true
+#   FS_UUID        要写入的文件系统 UUID（默认沿用上游固定值）
+#   SHRINK_IMAGE   true/false，默认 true
+#   COMPRESS_IMAGE none/zstd/xz，默认 zstd（压缩 rootfs.img 便于上传）
 #
 # 用法: sudo scripts/host/04-finalize-image.sh [镜像] [挂载点]
 set -euo pipefail
@@ -55,6 +56,51 @@ log "最终产物:"
 ls -lh "$IMAGE" | sed 's/^/    /'
 du -h --apparent-size "$IMAGE" | sed 's/^/    实际大小(逻辑): /'
 
+# ---------------------------------------------------------------------------
+# 可选压缩：rootfs.img 约 31 GiB，压缩后约 7-8 GiB，便于上传/下载。
+#   设备端刷写前需先解压：`zstd -d rootfs.img.zst` 或 `xz -d rootfs.img.xz`。
+# ---------------------------------------------------------------------------
+COMPRESS_IMAGE="${COMPRESS_IMAGE:-zstd}"
+COMPRESS_RESULT="未压缩"
+COMPRESSED=""
+case "$COMPRESS_IMAGE" in
+  none|"")
+    COMPRESS_RESULT="已跳过（compress_image=none）"
+    ;;
+  zstd)
+    if command -v zstd >/dev/null 2>&1; then
+      log "zstd 压缩（-T0 -19）..."
+      if zstd -T0 -19 -f "$IMAGE" -o "$IMAGE.zst"; then
+        COMPRESSED="$IMAGE.zst"
+        COMPRESS_RESULT="zstd $(du -h "$IMAGE.zst" | cut -f1)（原 $(du -h --apparent-size "$IMAGE" | cut -f1)）"
+      else
+        COMPRESS_RESULT="zstd 压缩失败"; warn "$COMPRESS_RESULT"
+      fi
+    else
+      COMPRESS_RESULT="未找到 zstd"; warn "$COMPRESS_RESULT"
+    fi
+    ;;
+  xz)
+    if command -v xz >/dev/null 2>&1; then
+      log "xz 压缩（-T0 -6，较慢）..."
+      if xz -T0 -6 -k -f "$IMAGE"; then
+        COMPRESSED="$IMAGE.xz"
+        COMPRESS_RESULT="xz $(du -h "$IMAGE.xz" | cut -f1)（原 $(du -h --apparent-size "$IMAGE" | cut -f1)）"
+      else
+        COMPRESS_RESULT="xz 压缩失败"; warn "$COMPRESS_RESULT"
+      fi
+    else
+      COMPRESS_RESULT="未找到 xz"; warn "$COMPRESS_RESULT"
+    fi
+    ;;
+  *) COMPRESS_RESULT="未知 compress_image=$COMPRESS_IMAGE"; warn "$COMPRESS_RESULT" ;;
+esac
+if [[ -n "$COMPRESSED" ]]; then
+  log "压缩产物: $(basename "$COMPRESSED") $(du -h "$COMPRESSED" | cut -f1)"
+else
+  log "未生成压缩产物（$COMPRESS_RESULT）"
+fi
+
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "### rootfs.img"
@@ -65,5 +111,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "| 文件系统 UUID | $(tune2fs -l "$IMAGE" 2>/dev/null | awk -F': ' '/Filesystem UUID/{print $2}') |"
     echo "| shrink_image | $SHRINK_IMAGE |"
     echo "| 收缩结果 | $SHRINK_RESULT |"
+    echo "| 压缩 | $COMPRESS_RESULT |"
+    echo "| 压缩产物 | ${COMPRESSED:-无} |"
   } >> "$GITHUB_STEP_SUMMARY"
 fi

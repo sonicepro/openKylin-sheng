@@ -1,86 +1,97 @@
 #!/usr/bin/env bash
-# 05-fetch-rootfs.sh —— 选项 C（下载部分）：只取官方 ISO 里的 rootfs，不下载整个 ISO
+# 05-fetch-rootfs.sh —— 选项 C：从 openKylin 官方 arm64 桌面镜像铺出 rootfs
 #
-# openKylin 桌面 ISO 有 7.35 GB，而 rootfs 解包后又约 31 GiB；GitHub runner 的磁盘
-# 放不下「完整 ISO + 大镜像」。这里用 HTTP Range：
-#   1) 先拉 ISO 头部 8 MB，解析 casper/filesystem.squashfs 的字节偏移与长度；
-#   2) 只 range 下载这段 squashfs（约 2.7 GB）；
-#   3) 顺带读 casper/filesystem.size（解包后大小），据此算出 rootfs.img 需要多大，
-#      通过 $GITHUB_OUTPUT 的 img_size 传给后续步骤。
+# 背景：openKylin 公开的 arm64 软件归档缺包，用 debootstrap+apt 装不出 UKUI。
+# 改为直接取官方镜像里"已经装好"的 rootfs（casper/filesystem.squashfs）。
+# 与 ubuntu-sheng 的对应：那边用 ubuntu-base tarball 铺底，这里用官方 ISO 的
+# squashfs 铺底——等价的一步，只是来源不同。
 #
-# 依赖：curl（需支持 Range）、python3（iso-squash-info.py）。
-# 产出：$PWD/filesystem.squashfs；$GITHUB_OUTPUT 的 img_size（形如 34G）。
+# 为什么用「挂载整个 ISO」而不是「range 只下 squashfs」：
+#   ISO 里 filesystem.squashfs 有 7.2 GiB（>4 GiB，ISO9660 会拆成多个 extent），
+#   直接按目录项长度 range 下会只拿到第一段 → 坏文件。挂载 ISO 读整个文件最稳。
+#   （squashfs 7.2 GiB 与整个 ISO 7.35 GiB 相差无几，也没必要省这点。）
 #
-# 用法: scripts/host/05-fetch-rootfs.sh   （不需要 root，只要联网）
+# 环境变量：
+#   OPENKYLIN_ISO_URL       ISO 地址
+#   OPENKYLIN_ISO           本地 ISO 路径（默认 $PWD/openkylin.iso；已存在则复用）
+#   ROOTFS_SIZE_MARGIN_GIB  镜像在「解包大小」之上留的余量 GiB（默认 4）
+#
+# 用法: sudo scripts/host/05-fetch-rootfs.sh [挂载点]
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../common/distro-env.sh
 source "$HERE/../common/distro-env.sh"
+require_root
 
-ISO_URL="$OPENKYLIN_ISO_URL"
-HEAD="$PWD/iso-head.bin"
-SQUASH="$PWD/filesystem.squashfs"
-SIZE_BIN="$PWD/fs-size.bin"
-MARGIN_GIB="${ROOTFS_SIZE_MARGIN_GIB:-4}"   # 镜像余量（内核/固件/设备包等）
+command -v unsquashfs >/dev/null 2>&1 \
+  || die "未安装 squashfs-tools（unsquashfs）；请在 workflow/宿主 apt-get install squashfs-tools"
 
-command -v python3 >/dev/null 2>&1 || die "需要 python3（解析 ISO 头部）"
-
-# ---------------------------------------------------------------------------
-# 1) 头部 8 MB（若服务器忽略 Range 会拿到完整文件，用 --max-filesize 兜底中止）
-# ---------------------------------------------------------------------------
-log "读取 ISO 头部以定位 rootfs: $ISO_URL"
-if ! curl -fL --retry 3 --connect-timeout 30 -r 0-8388607 --max-filesize 16777216 \
-        -o "$HEAD" "$ISO_URL"; then
-  die "无法读取 ISO 头部（$ISO_URL）。本脚本依赖对 ISO 的 HTTP Range 支持；请换一个支持 Range 的镜像地址"
-fi
-[[ -s "$HEAD" ]] || die "ISO 头部为空"
+MOUNT="${1:-/mnt/rootfs}"
+ISO="${OPENKYLIN_ISO:-$PWD/openkylin.iso}"
+IMAGE="${OPENKYLIN_ROOTFS_IMAGE:-$PWD/rootfs.img}"
+MARGIN_GIB="${ROOTFS_SIZE_MARGIN_GIB:-4}"
+ISOMNT="${OPENKYLIN_ISO_MNT:-/mnt/ok-iso}"
 
 # ---------------------------------------------------------------------------
-# 2) 解析偏移/长度
+# 1) ISO（本地已有则复用）
 # ---------------------------------------------------------------------------
-eval "$(python3 "$HERE/iso-squash-info.py" "$HEAD")"
-: "${squashfs_off:?}" "${squashfs_len:?}"
-log "filesystem.squashfs: offset=$squashfs_off len=$squashfs_len"
-
-# ---------------------------------------------------------------------------
-# 3) 只下载 squashfs 这一段
-# ---------------------------------------------------------------------------
-squashfs_end=$((squashfs_off + squashfs_len - 1))
-log "range 下载 squashfs（约 $((squashfs_len / 1024 / 1024)) MB）..."
-curl -fL --retry 3 --connect-timeout 30 -r "${squashfs_off}-${squashfs_end}" \
-     -o "$SQUASH" "$ISO_URL"
-
-actual="$(stat -c%s "$SQUASH" 2>/dev/null || wc -c < "$SQUASH")"
-if [[ "$actual" != "$squashfs_len" ]]; then
-  die "range 下载大小不符：得到 $actual，期望 $squashfs_len（服务器可能不支持 Range，请换镜像）"
-fi
-log "squashfs 就绪: $(du -h "$SQUASH" | cut -f1)"
-
-# ---------------------------------------------------------------------------
-# 4) 解包后大小 → 计算 rootfs.img 需要多大
-# ---------------------------------------------------------------------------
-#   filesystem.size 是纯文本的字节数；rootfs.img 需要「解包大小 + 余量」。
-#   余量用于：设备内核/固件 deb、inode 开销、e2fs 元数据等。
-if [[ "$size_len" -gt 0 ]]; then
-  curl -fL --retry 3 -r "${size_off}-$((size_off + size_len - 1))" -o "$SIZE_BIN" "$ISO_URL" || true
-  UNCOMPRESSED="$(tr -dc '0-9' < "$SIZE_BIN" 2>/dev/null || true)"
+if [[ ! -s "$ISO" ]]; then
+  log "下载 openKylin ISO: $OPENKYLIN_ISO_URL"
+  curl -fL --retry 3 --connect-timeout 30 -o "$ISO.part" "$OPENKYLIN_ISO_URL" \
+    || die "ISO 下载失败（检查 OPENKYLIN_ISO_URL / 网络）"
+  mv "$ISO.part" "$ISO"
 else
-  UNCOMPRESSED=""
+  log "复用本地 ISO: $ISO"
 fi
+log "ISO 大小: $(du -h "$ISO" | cut -f1)"
 
+# ---------------------------------------------------------------------------
+# 2) 只读挂载 ISO
+# ---------------------------------------------------------------------------
+mkdir -p "$ISOMNT"
+if ! mountpoint -q "$ISOMNT"; then
+  mount -o loop,ro "$ISO" "$ISOMNT"
+fi
+cleanup() { mountpoint -q "$ISOMNT" && umount "$ISOMNT" 2>/dev/null || true; }
+trap cleanup EXIT
+
+SQUASH="$ISOMNT/casper/filesystem.squashfs"
+[[ -f "$SQUASH" ]] || SQUASH="$(find "$ISOMNT" -maxdepth 3 -iname 'filesystem.squashfs' | head -n1)"
+[[ -f "$SQUASH" ]] || die "ISO 里找不到 filesystem.squashfs（检查 $ISOMNT 结构）"
+log "rootfs: $SQUASH（$(du -h "$SQUASH" | cut -f1)）"
+
+# ---------------------------------------------------------------------------
+# 3) 读「解包后大小」→ 决定 rootfs.img 多大
+#    （filesystem.size 是解包后内容大小；镜像要 ≥ 它 + 余量）
+# ---------------------------------------------------------------------------
+UNCOMPRESSED=""
+for f in "$(dirname "$SQUASH")/filesystem.size" "$ISOMNT/casper/filesystem.size"; do
+  if [[ -f "$f" ]]; then UNCOMPRESSED="$(tr -dc '0-9' < "$f")"; break; fi
+done
 if [[ -n "${UNCOMPRESSED:-}" ]]; then
-  need_gib=$(( (UNCOMPRESSED + 1073741823) / 1073741824 + MARGIN_GIB ))
-  log "rootfs 解包后约 $((UNCOMPRESSED / 1024 / 1024)) MB → rootfs.img 设为 ${need_gib}G（含 ${MARGIN_GIB}G 余量）"
+  SIZE_GIB=$(( (UNCOMPRESSED + 1073741823) / 1073741824 + MARGIN_GIB ))
+  log "rootfs 解包后约 $((UNCOMPRESSED / 1024 / 1024)) MB → rootfs.img = ${SIZE_GIB}G（含 ${MARGIN_GIB}G 余量）"
 else
-  need_gib="${ROOTFS_SIZE_GIB_DEFAULT:-36}"
-  warn "未能读到 filesystem.size，回退 rootfs.img=${need_gib}G"
+  SIZE_GIB="${ROOTFS_SIZE_GIB_DEFAULT:-36}"
+  warn "读不到 filesystem.size，回退 rootfs.img=${SIZE_GIB}G"
 fi
 
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  echo "img_size=${need_gib}G" >> "$GITHUB_OUTPUT"
-  echo "uncompressed_bytes=${UNCOMPRESSED:-0}" >> "$GITHUB_OUTPUT"
-fi
+# ---------------------------------------------------------------------------
+# 4) 建并挂载 rootfs.img
+# ---------------------------------------------------------------------------
+rm -f "$IMAGE"
+truncate -s "${SIZE_GIB}G" "$IMAGE"
+mkfs.ext4 -F -q -L rootfs "$IMAGE"
+mkdir -p "$MOUNT"
+mount -o loop "$IMAGE" "$MOUNT"
 
-# 清理只有头部解析用得到的临时文件
-rm -f "$HEAD" "$SIZE_BIN" 2>/dev/null || true
-log "完成：filesystem.squashfs 已在 $PWD，供 06-unsquashfs.sh 使用"
+# ---------------------------------------------------------------------------
+# 5) 解包
+# ---------------------------------------------------------------------------
+log "unsquashfs → $MOUNT（这一步较慢，几分钟）"
+unsquashfs -f -d "$MOUNT" "$SQUASH"
+
+[[ -x "$MOUNT/usr/bin/apt-get" ]] || die "解包后的 rootfs 缺少 apt-get（镜像结构异常）"
+log "rootfs 就绪："
+cat "$MOUNT/etc/os-release" 2>/dev/null | sed 's/^/    /' || true
+printf '    顶层目录: %s\n' "$(ls "$MOUNT" | tr '\n' ' ')"

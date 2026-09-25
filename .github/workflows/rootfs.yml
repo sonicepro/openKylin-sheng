@@ -146,6 +146,15 @@ on:
         required: false
         type: boolean
         default: true
+      compress_image:
+        description: '构建后压缩 rootfs.img（zstd 快 / xz 更小 / none）；刷写前需解压：zstd -d 或 xz -d'
+        required: false
+        type: choice
+        default: 'zstd'
+        options:
+          - 'zstd'
+          - 'xz'
+          - 'none'
       upload_artifacts:
         description: '上传 rootfs.img / boot.img（测试时可关闭）'
         required: false
@@ -282,7 +291,7 @@ jobs:
       - name: Install Host Tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq debootstrap curl git e2fsprogs squashfs-tools
+          sudo apt-get install -y -qq debootstrap curl git e2fsprogs squashfs-tools zstd xz-utils
 
       - name: "[Prebuilt] Download Kernel & boot.img"
         if: inputs.kernel_source != 'custom_build'
@@ -368,28 +377,20 @@ jobs:
             exit 1
           fi
 
-      - name: "[image] Fetch openKylin rootfs (squashfs only, HTTP range)"
+      - name: "[image] Prepare rootfs from ISO"
         if: inputs.rootfs_source == 'image'
-        id: fetch
         env:
           OPENKYLIN_ISO_URL: ${{ inputs.openkylin_iso_url }}
+          OPENKYLIN_ISO: ${{ github.workspace }}/openkylin.iso
         run: |
           chmod +x scripts/host/05-fetch-rootfs.sh
-          bash scripts/host/05-fetch-rootfs.sh
+          sudo -E bash scripts/host/05-fetch-rootfs.sh "$ROOTFS_MOUNT"
 
-      - name: Create & Mount RootFS Image
+      - name: "[debootstrap] Create & Mount RootFS Image"
+        if: inputs.rootfs_source == 'debootstrap'
         run: |
           chmod +x scripts/host/00-prepare-image.sh
-          SIZE="${{ steps.fetch.outputs.img_size }}"
-          [ -n "$SIZE" ] || SIZE="${{ inputs.rootfs_size }}"
-          echo "rootfs.img 大小: $SIZE"
-          sudo bash scripts/host/00-prepare-image.sh rootfs.img "$SIZE" "$ROOTFS_MOUNT"
-
-      - name: "[image] Unsquashfs into image"
-        if: inputs.rootfs_source == 'image'
-        run: |
-          chmod +x scripts/host/06-unsquashfs.sh
-          sudo bash scripts/host/06-unsquashfs.sh "$ROOTFS_MOUNT"
+          sudo bash scripts/host/00-prepare-image.sh rootfs.img "${{ inputs.rootfs_size }}" "$ROOTFS_MOUNT"
 
       - name: "[debootstrap] Bootstrap openKylin Base"
         if: inputs.rootfs_source == 'debootstrap'
@@ -471,16 +472,27 @@ jobs:
         run: |
           chmod +x scripts/host/04-finalize-image.sh
           sudo env SHRINK_IMAGE="${{ inputs.shrink_image }}" \
+                   COMPRESS_IMAGE="${{ inputs.compress_image }}" \
             bash scripts/host/04-finalize-image.sh rootfs.img "$ROOTFS_MOUNT"
 
-      - name: Upload RootFS Image
-        if: success() && inputs.upload_artifacts
+      - name: Upload RootFS Image (raw)
+        if: success() && inputs.upload_artifacts && inputs.compress_image == 'none'
         uses: actions/upload-artifact@v7
         with:
           name: rootfs-openkylin-${{ steps.parse.outputs.series }}-${{ steps.parse.outputs.desktop_slug }}-${{ steps.parse.outputs.label }}
           path: rootfs.img
           retention-days: 14
-          compression-level: 1
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload RootFS Image (compressed)
+        if: success() && inputs.upload_artifacts && inputs.compress_image != 'none'
+        uses: actions/upload-artifact@v7
+        with:
+          name: rootfs-openkylin-${{ steps.parse.outputs.series }}-${{ steps.parse.outputs.desktop_slug }}-${{ steps.parse.outputs.label }}-${{ inputs.compress_image }}
+          path: ${{ inputs.compress_image == 'xz' && 'rootfs.img.xz' || 'rootfs.img.zst' }}
+          retention-days: 14
+          compression-level: 0
           if-no-files-found: error
 
       - name: Upload Boot Image
