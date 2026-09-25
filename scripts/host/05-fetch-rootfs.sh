@@ -36,10 +36,26 @@ ISOMNT="${OPENKYLIN_ISO_MNT:-/mnt/ok-iso}"
 # 1) ISO（本地已有则复用）
 # ---------------------------------------------------------------------------
 if [[ ! -s "$ISO" ]]; then
-  log "下载 openKylin ISO: $OPENKYLIN_ISO_URL"
-  curl -fL --retry 3 --connect-timeout 30 -o "$ISO.part" "$OPENKYLIN_ISO_URL" \
-    || die "ISO 下载失败（检查 OPENKYLIN_ISO_URL / 网络）"
-  mv "$ISO.part" "$ISO"
+  log "下载 openKylin ISO: $OPENKYLIN_ISO_URL（并行分段）"
+  iso_size="$(curl -sIL "$OPENKYLIN_ISO_URL" | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}' | tail -n1)"
+  conns=8
+  if [[ "$iso_size" =~ ^[0-9]+$ ]] && [ "$iso_size" -gt 1048576 ]; then
+    part=$(( (iso_size + conns - 1) / conns ))
+    pids=()
+    for (( i=0; i<conns; i++ )); do
+      s=$(( i * part )); e=$(( s + part - 1 )); [ "$e" -ge "$iso_size" ] && e=$(( iso_size - 1 ))
+      [ "$s" -ge "$iso_size" ] && break
+      curl -fsL --retry 3 --connect-timeout 30 -r "${s}-${e}" -o "$ISO.part$(printf '%02d' "$i")" "$OPENKYLIN_ISO_URL" &
+      pids+=( $! )
+    done
+    rc=0; for pid in "${pids[@]}"; do wait "$pid" || rc=1; done
+    [ "$rc" -eq 0 ] || die "并行分段下载失败"
+    cat "$ISO".part* > "$ISO"
+    rm -f "$ISO".part*
+  else
+    warn "拿不到文件大小，单连接下载"
+    curl -fL --retry 3 --connect-timeout 30 -o "$ISO" "$OPENKYLIN_ISO_URL" || die "ISO 下载失败"
+  fi
 else
   log "复用本地 ISO: $ISO"
 fi

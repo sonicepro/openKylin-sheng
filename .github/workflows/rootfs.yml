@@ -151,10 +151,10 @@ on:
           - 'xz'
           - 'none'
       upload_artifacts:
-        description: '上传 rootfs.img / boot.img 到 Actions Artifact（测试时可关闭）'
+        description: '上传 rootfs.img / boot.img 到 Actions Artifact（默认关；Release 为正式产物，重复上传白耗时间）'
         required: false
         type: boolean
-        default: true
+        default: false
       create_release:
         description: '把产物发布到 GitHub Release（单文件上限 2GiB，大镜像会自动分片）'
         required: false

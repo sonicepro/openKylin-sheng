@@ -129,6 +129,19 @@ sudo scripts/host/03-umount-chroot.sh /mnt/rootfs
 sudo scripts/host/04-finalize-image.sh rootfs.img /mnt/rootfs
 ```
 
+## 性能（构建耗时优化）
+
+单次构建很重（rootfs 约 31 GiB），已做的提速：
+
+- **ISO 下载**：改成 **8 路并行分段**下载（openKylin CDN 单连接可能很慢）。
+- **压缩**：`zstd` 默认用 **-6**（原来是 -19，压 31 GiB 极慢）。要更小：设 `ZSTD_LEVEL=19`；
+  要更快：设 `ZSTD_LEVEL=3`。整块也可切 `compress_image=xz`（更小但更慢）。
+- **上传**：默认只发 **Release**（`upload_artifacts=false`），不再把 7 GB 产物重复传一遍 Actions Artifact。
+- **诊断**：每步日志带时间戳（`[脚本 HH:MM:SS] ...`），一眼看出哪一步慢。
+
+仍较慢、难避免的环节：`unsquashfs` 解包 ~31 GiB、`e2fsck`/`resize2fs -M` 收缩、最终压缩与上传。
+若想大幅缩短，可后续加「精简（删 kylin AI 模型）」把镜像缩到 ~10 GiB。
+
 ## 许可与第三方组件
 
 本仓库是构建脚本集合，自身不声明开源许可证。仓库内包含的第三方内容版权归各自权利人：

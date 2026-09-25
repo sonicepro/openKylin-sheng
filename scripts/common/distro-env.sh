@@ -71,7 +71,7 @@ export OPENKYLIN_COMPONENTS="${OPENKYLIN_COMPONENTS:-main cross pty}"
 export ROOTFS_SOURCE="${ROOTFS_SOURCE:-image}"
 export OPENKYLIN_ISO_URL="${OPENKYLIN_ISO_URL:-https://cdimage.openkylin.top/3.0/openKylin-Desktop-V3.0-20260905-arm64.iso}"
 
-log()  { printf '[%s] %s\n' "${0##*/}" "$*"; }
+log()  { printf '[%s %s] %s\n' "${0##*/}" "$(date +%T)" "$*"; }
 warn() { printf '[%s] 警告: %s\n' "${0##*/}" "$*" >&2; }
 die()  { printf '[%s] 错误: %s\n' "${0##*/}" "$*" >&2; exit 1; }
 

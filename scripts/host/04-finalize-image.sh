@@ -70,7 +70,7 @@ case "$COMPRESS_IMAGE" in
   zstd)
     if command -v zstd >/dev/null 2>&1; then
       log "zstd 压缩（-T0 -19）..."
-      if zstd -T0 -19 -f "$IMAGE" -o "$IMAGE.zst"; then
+      if zstd -T0 "-${ZSTD_LEVEL:-6}" -f "$IMAGE" -o "$IMAGE.zst"; then
         COMPRESSED="$IMAGE.zst"
         COMPRESS_RESULT="zstd $(du -h "$IMAGE.zst" | cut -f1)（原 $(du -h --apparent-size "$IMAGE" | cut -f1)）"
       else
