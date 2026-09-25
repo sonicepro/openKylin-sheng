@@ -137,10 +137,10 @@ on:
         type: string
         default: 'master'
       rootfs_size:
-        description: 'rootfs.img 初始大小（构建后会收缩，首启自动扩容）'
+        description: 'rootfs.img 初始大小（image 模式会自动按解包大小算，此项为回退/覆盖）'
         required: false
         type: string
-        default: '16G'
+        default: '36G'
       shrink_image:
         description: '构建后收缩镜像（e2fsck + resize2fs -M）'
         required: false
@@ -179,6 +179,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Free Disk Space
+        # 官方桌面 ISO 的 rootfs 解包后约 31 GiB，加上中间产物，标准 runner 的
+        # 默认磁盘不够。删掉预装的大块工具链腾出约 25 GiB。
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
+          sudo rm -rf /usr/local/lib/node_modules /opt/az /usr/local/aws-cli 2>/dev/null || true
+          sudo apt-get clean
+          df -h /
 
       - name: Verify Arguments
         env:
@@ -358,19 +368,28 @@ jobs:
             exit 1
           fi
 
+      - name: "[image] Fetch openKylin rootfs (squashfs only, HTTP range)"
+        if: inputs.rootfs_source == 'image'
+        id: fetch
+        env:
+          OPENKYLIN_ISO_URL: ${{ inputs.openkylin_iso_url }}
+        run: |
+          chmod +x scripts/host/05-fetch-rootfs.sh
+          bash scripts/host/05-fetch-rootfs.sh
+
       - name: Create & Mount RootFS Image
         run: |
           chmod +x scripts/host/00-prepare-image.sh
-          sudo bash scripts/host/00-prepare-image.sh rootfs.img "${{ inputs.rootfs_size }}" "$ROOTFS_MOUNT"
+          SIZE="${{ steps.fetch.outputs.img_size }}"
+          [ -n "$SIZE" ] || SIZE="${{ inputs.rootfs_size }}"
+          echo "rootfs.img 大小: $SIZE"
+          sudo bash scripts/host/00-prepare-image.sh rootfs.img "$SIZE" "$ROOTFS_MOUNT"
 
-      - name: "[image] Extract openKylin rootfs from ISO"
+      - name: "[image] Unsquashfs into image"
         if: inputs.rootfs_source == 'image'
-        env:
-          OPENKYLIN_ISO_URL: ${{ inputs.openkylin_iso_url }}
-          OPENKYLIN_ISO: ${{ github.workspace }}/openkylin.iso
         run: |
-          chmod +x scripts/host/05-fetch-rootfs.sh
-          sudo -E bash scripts/host/05-fetch-rootfs.sh "$ROOTFS_MOUNT"
+          chmod +x scripts/host/06-unsquashfs.sh
+          sudo bash scripts/host/06-unsquashfs.sh "$ROOTFS_MOUNT"
 
       - name: "[debootstrap] Bootstrap openKylin Base"
         if: inputs.rootfs_source == 'debootstrap'

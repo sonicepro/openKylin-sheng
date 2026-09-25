@@ -17,6 +17,7 @@ openKylin 公开的 arm64 软件归档**不完整**：`ukui-desktop-environment`
 所以本项目默认 **`rootfs_source=image`**：直接取 openKylin 官方 arm64 **桌面 ISO** 里已经装好的 rootfs（`casper/filesystem.squashfs`），再叠加 sheng 设备包，不依赖 apt 去解析那套坏掉的依赖。
 
 - 默认镜像：`https://cdimage.openkylin.top/3.0/openKylin-Desktop-V3.0-20260905-arm64.iso`
+- 桌面 rootfs 解包后约 **31 GiB**（含大量 kylin AI 模型）：构建只 range 下载 2.7 GB 的 `filesystem.squashfs`（不下载整个 7.35 GB ISO），并按 ISO 的 `filesystem.size` 自动设定 `rootfs.img` 大小。
 - 解出的 rootfs 已是完整 openKylin 3.0 (huanghe) + UKUI 桌面（1880 个包），随后：
   - `05-de-live.sh`：清掉 casper/live 残留、屏蔽首启安装器、清空 fstab
   - `30-device-packages.sh`：装 `linux-xiaomi-sheng` 等设备 deb
@@ -62,7 +63,7 @@ openKylin 2.0（nile）基础是 **Debian 13 系**（`base-files 13-ok2.2`、`sy
 | **kernel_source** | `prebuilt` | `prebuilt` = 取 [ianchb/sm8550-mainline](https://github.com/ianchb/sm8550-mainline) 的 release；`custom_build` = 自行编译 |
 | **kernel_release** | `7.2.6` | `prebuilt` 取哪个 release（留空取最新） |
 | **firmware_repo / firmware_branch** | `ianchb/sheng-firmware` / `master` | 设备固件来源 |
-| **rootfs_size** | `16G` | 镜像初始大小（构建后收缩，首启 `x-systemd.growfs` 扩到分区实际大小） |
+| **rootfs_size** | 自动（回退 `36G`） | image 模式按 ISO 的 `filesystem.size` 自动算（约 31 GiB + 余量）；构建后收缩，首启 `x-systemd.growfs` 扩容 |
 | **shrink_image** | `true` | 构建后 `e2fsck -fy` + `resize2fs -M` 收缩 |
 | **upload_artifacts** | `true` | 设为 `false` 只验证流程、不产出 Artifact |
 
@@ -74,7 +75,9 @@ scripts/
   host/                     # 宿主阶段（在 arm64 runner 上跑）
     00-prepare-image.sh     #   建 rootfs.img 并挂载
     01-bootstrap.sh         #   debootstrap 引导（debootstrap 模式）
-    05-fetch-rootfs.sh      #   ★ 从官方 ISO 解出 rootfs（image 模式，默认）
+    05-fetch-rootfs.sh      #   ★ 只 range 下载 ISO 里的 filesystem.squashfs + 算镜像大小
+    06-unsquashfs.sh        #   ★ 把 squashfs 解进 rootfs.img
+    iso-squash-info.py      #   解析 ISO 头部，定位 squashfs 偏移/长度
     02-mount-chroot.sh      #   挂载 /dev /proc /sys，拷脚本与 deb 入镜像
     03-umount-chroot.sh
     04-finalize-image.sh    #   收缩镜像、固定 UUID
@@ -103,8 +106,9 @@ sudo apt-get install -y debootstrap curl git e2fsprogs squashfs-tools
 # 1) 先把设备包准备好放到 debs/（见 .github/workflows/_packages.yml 的各作业）
 #    并准备 boot.img（scripts/host/10-fetch-kernel.sh 需要 gh 已登录）
 # 2) 铺底 rootfs（image 模式，默认）
-sudo scripts/host/00-prepare-image.sh rootfs.img 16G /mnt/rootfs
-sudo scripts/host/05-fetch-rootfs.sh /mnt/rootfs
+sudo scripts/host/05-fetch-rootfs.sh                 # 只下 squashfs，并打印所需镜像大小
+sudo scripts/host/00-prepare-image.sh rootfs.img 36G /mnt/rootfs   # 大小见上一步输出
+sudo scripts/host/06-unsquashfs.sh /mnt/rootfs
 sudo scripts/host/02-mount-chroot.sh /mnt/rootfs
 # 3) 写 /mnt/rootfs/root/build.env（见 rootfs.yml 的 Write Build Environment）
 # 4) chroot 执行镜像内脚本
