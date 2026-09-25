@@ -84,12 +84,18 @@ fi
 
 # 4b) 桌面链路（UKUI / lightdm）
 if [[ "${DESKTOP:-server}" == "UKUI" ]]; then
-  # UKUI 会话文件（x11 或 wayland 任一即可）
-  if compgen -G "/usr/share/xsessions/ukui*.desktop" >/dev/null \
-     || compgen -G "/usr/share/wayland-sessions/ukui*.desktop" >/dev/null; then
-    pass "UKUI 会话文件存在"
+  # UKUI 会话文件（x11 或 wayland 任一即可；名字可能带 ukui/kylin 前缀）
+  SESS=""
+  for d in /usr/share/wayland-sessions /usr/share/xsessions; do
+    for f in "$d"/*.desktop; do
+      [[ -e "$f" ]] || continue
+      case "$(basename "$f")" in *ukui*|*kylin*) SESS="$f"; break 2 ;; esac
+    done
+  done
+  if [[ -n "$SESS" ]]; then
+    pass "UKUI 会话文件: $SESS"
   else
-    fail "缺少 UKUI 会话文件（/usr/share/{x,wayland}-sessions/ukui*.desktop）"
+    fail "未找到 UKUI 会话文件；xsessions=[$(ls /usr/share/xsessions 2>/dev/null | tr '\n' ' ')] wayland=[$(ls /usr/share/wayland-sessions 2>/dev/null | tr '\n' ' ')]"
   fi
   # 显示管理器必须 enabled
   if [[ -e /etc/systemd/system/display-manager.service ]] \
@@ -112,10 +118,11 @@ fi
 
 # 5) 网络
 if [[ -e /etc/systemd/system/multi-user.target.wants/NetworkManager.service ]] \
+   || [[ -e /etc/systemd/system/dbus-org.freedesktop.NetworkManager.service ]] \
    || systemctl is-enabled NetworkManager.service >/dev/null 2>&1; then
   pass "NetworkManager 已启用"
 else
-  fail "NetworkManager 未启用"
+  fail "NetworkManager 未启用（看 /etc/systemd/system/multi-user.target.wants/）"
 fi
 
 # 6) locale

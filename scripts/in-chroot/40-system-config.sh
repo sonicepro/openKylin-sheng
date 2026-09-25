@@ -86,7 +86,16 @@ log "已设置 $USERNAME 与 root 的密码"
 # 4) 网络
 # ---------------------------------------------------------------------------
 log "启用 NetworkManager"
-systemctl enable NetworkManager.service || warn "启用 NetworkManager 失败"
+if [[ -f /lib/systemd/system/NetworkManager.service || -f /usr/lib/systemd/system/NetworkManager.service ]]; then
+  # openKylin 镜像里 NM 可能被 mask 或从未启用；unmask + enable，并给手动软链兜底
+  systemctl unmask NetworkManager.service 2>/dev/null || true
+  systemctl enable NetworkManager.service 2>/dev/null || \
+    ln -sf /lib/systemd/system/NetworkManager.service \
+           /etc/systemd/system/multi-user.target.wants/NetworkManager.service 2>/dev/null || \
+    warn "启用 NetworkManager 失败"
+else
+  warn "未找到 NetworkManager.service 单元"
+fi
 
 # ---------------------------------------------------------------------------
 # 5) 显示管理器 + 自动登录（openKylin：lightdm + ukui-greeter）
@@ -94,12 +103,14 @@ systemctl enable NetworkManager.service || warn "启用 NetworkManager 失败"
 case "$DESKTOP" in
   UKUI)
     if [[ "$AUTOLOGIN" == "true" ]]; then
-      # 探测可用的 UKUI 会话名（Wayland 优先）
+      # 探测可用的 UKUI 会话名（名字可能带 ukui/kylin 前缀，扫目录最稳）
       SESSION=""
-      for cand in ukui-wayland ukui; do
-        if [[ -f "/usr/share/wayland-sessions/$cand.desktop" || -f "/usr/share/xsessions/$cand.desktop" ]]; then
-          SESSION="$cand"; break
-        fi
+      for d in /usr/share/wayland-sessions /usr/share/xsessions; do
+        for f in "$d"/*.desktop; do
+          [[ -e "$f" ]] || continue
+          b="$(basename "$f" .desktop)"
+          case "$b" in *ukui*|*kylin*) SESSION="$b"; break 2 ;; esac
+        done
       done
       log "配置 LightDM 自动登录: $USERNAME (session=${SESSION:-默认})"
       install -d /etc/lightdm/lightdm.conf.d
