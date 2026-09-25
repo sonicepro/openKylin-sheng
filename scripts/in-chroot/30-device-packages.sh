@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# 30-device-packages.sh —— 安装全部设备功能包（/tmp/debs/*.deb）并做设备侧收尾
+# 30-device-packages.sh —— 安装设备功能包（/tmp/debs/*.deb）并做设备侧收尾
 #
-# 与 ubuntu-sheng 的差异（主要在 openKylin image 模式）：
-#   1. 官方桌面 rootfs 自带 linux-firmware，而 firmware-xiaomi-sheng 声明
-#      Conflicts/Replaces: linux-firmware → 必须先移除 linux-firmware，否则装不上。
-#   2. image 模式不跑 10-base，设备包的运行期依赖（libprotobuf-c1/libqmi-glib5 等）
-#      没装过 → 这里先补装（runtime-libs.list，best-effort）。
-#   3. 设备包分「必需」与「可选（xiaomi-* 功能）」：必需硬失败；可选逐个 best-effort，
-#      装不上就跳过。例如 xiaomi-sheng-fingerprint 需要 fprintd>=1.94.5 /
-#      libgusb2>=0.4.9，openKylin 3.0 版本偏低 → 跳过（仅指纹功能缺失）。
+# openKylin image 模式的差异：
+#   * 官方桌面 rootfs 自带 linux-firmware，而 firmware-xiaomi-sheng 声明
+#     Conflicts/Replaces: linux-firmware。**绝不能** `apt purge linux-firmware`——
+#     在 openKylin 上会沿依赖链级联删掉一大片（连桌面会话包 ukui-session-manager、
+#     network-manager 都被带走，90-verify 因此报“无会话/无 NM”）。
+#     改用 `dpkg-deb -x` 直接把固件文件铺进 /（覆盖同名文件、不注册包、不删别人）。
+#   * image 模式不跑 10-base → 先补装设备包运行期依赖（libprotobuf-c1/libqmi-glib5 等）。
+#   * 设备包分「必需」与「可选（xiaomi-*）」：必需硬失败；可选装不上则跳过
+#     （如 xiaomi-sheng-fingerprint 需要更高的 fprintd/libgusb2）。
 #
 # 在 chroot 内执行:
 #   chroot "$MOUNT" /root/ok-build/in-chroot/30-device-packages.sh
@@ -25,41 +26,26 @@ shopt -s nullglob
 
 debs=(/tmp/debs/*.deb)
 [[ "${#debs[@]}" -gt 0 ]] || die "/tmp/debs 下没有 .deb"
-
 log "待安装设备包（${#debs[@]} 个）："
 for d in "${debs[@]}"; do
-  printf '    %-46s %s\n' "$(basename "$d")" \
+  printf '    %-48s %s\n' "$(basename "$d")" \
     "$(dpkg-deb -f "$d" Package 2>/dev/null) $(dpkg-deb -f "$d" Version 2>/dev/null)"
 done
 
 # ---------------------------------------------------------------------------
-# 1) 更新 apt 索引（设备包依赖要从软件源解析，image 镜像里索引可能是空的）
+# 1) apt 索引 + 设备包运行期依赖
 # ---------------------------------------------------------------------------
-log "apt-get update（用于解析设备包依赖）"
+log "apt-get update（解析设备包依赖）"
 apt_update || warn "apt update 失败，设备包依赖可能装不上"
 
-# ---------------------------------------------------------------------------
-# 2) 移除与 firmware-xiaomi-sheng 冲突的 linux-firmware
-# ---------------------------------------------------------------------------
-if dpkg-query -W -f='${Status}' linux-firmware 2>/dev/null | grep -q "install ok installed"; then
-  log "移除 linux-firmware（firmware-xiaomi-sheng Conflicts/Replaces 它）"
-  apt-get purge -y linux-firmware 2>/dev/null \
-    || dpkg --purge --force-all linux-firmware 2>/dev/null \
-    || warn "移除 linux-firmware 失败（下面安装固件包可能因此失败）"
-  apt-get autoremove -y 2>/dev/null || true
-fi
-
-# ---------------------------------------------------------------------------
-# 3) 预装设备包运行期依赖（libssc 依赖 libprotobuf-c1/libqmi-glib5 等）
-# ---------------------------------------------------------------------------
 apt_install_list_best_effort "$BUILD_DIR/lists/runtime-libs.list"
 
 # ---------------------------------------------------------------------------
-# 4) 必需设备包（内核/固件/传感器/音频/键盘认证）——硬失败
+# 2) 必需设备包（不含固件）——硬失败
 # ---------------------------------------------------------------------------
 essential=()
 for p in linux-xiaomi-sheng fastrpc libssc iio-sensor-proxy sheng-sensors \
-         sheng-devauth alsa-xiaomi-sheng firmware-xiaomi-sheng; do
+         sheng-devauth alsa-xiaomi-sheng; do
   essential+=(/tmp/debs/${p}*.deb)
 done
 [[ "${#essential[@]}" -gt 0 ]] || die "没有匹配到必需设备包（检查 /tmp/debs 文件名）"
@@ -71,7 +57,19 @@ if ! apt_install "${essential[@]}"; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5) 可选功能包（xiaomi-*）——逐个 best-effort，依赖不满足则跳过
+# 3) 设备固件：用 dpkg-deb -x 直接铺（避免与 linux-firmware 的 Conflicts 级联删包）
+#    同名文件以 sheng 固件为准；linux-firmware 保留（多出来的文件无害）。
+# ---------------------------------------------------------------------------
+fw=(/tmp/debs/firmware-xiaomi-sheng*.deb)
+if [[ "${#fw[@]}" -gt 0 ]]; then
+  log "解包固件 $(basename "${fw[0]}") → /（保留 linux-firmware，不触发删包）"
+  dpkg-deb -x "${fw[0]}" /
+else
+  warn "未找到 firmware-xiaomi-sheng deb"
+fi
+
+# ---------------------------------------------------------------------------
+# 4) 可选功能包（xiaomi-*）——逐个 best-effort，依赖不满足则跳过
 # ---------------------------------------------------------------------------
 optional=(/tmp/debs/xiaomi-*.deb)
 log "安装可选功能包（${#optional[@]} 个，失败则跳过）"
@@ -90,7 +88,7 @@ if [[ "${#skipped[@]}" -gt 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6) 版本断言：iio-sensor-proxy 必须是本仓库的 9999x（带 SSC 后端）
+# 5) 版本断言：iio-sensor-proxy 必须是本仓库的 9999x（带 SSC 后端）
 # ---------------------------------------------------------------------------
 IIO_VER="$(dpkg-query -W -f='${Version}' iio-sensor-proxy 2>/dev/null || true)"
 case "$IIO_VER" in
@@ -100,7 +98,7 @@ case "$IIO_VER" in
 esac
 
 # ---------------------------------------------------------------------------
-# 7) 权限修复
+# 6) 权限修复
 # ---------------------------------------------------------------------------
 log "修复可执行权限"
 for f in /usr/bin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/monitor-sensor /usr/bin/ssccli; do
@@ -113,7 +111,7 @@ for f in /usr/bin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/monitor-sensor
 done
 
 # ---------------------------------------------------------------------------
-# 8) depmod（生成模块依赖索引）
+# 7) depmod（生成模块依赖索引）
 # ---------------------------------------------------------------------------
 KVER="$(ls -1 /usr/lib/modules 2>/dev/null | head -n1 || true)"
 if [[ -n "$KVER" ]]; then
@@ -126,7 +124,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9) 传感器/认证服务
+# 8) 传感器/认证服务
 # ---------------------------------------------------------------------------
 if [[ -f /usr/lib/systemd/system/adsprpcd-sensorspd.service ]]; then
   systemctl enable adsprpcd-sensorspd.service || warn "启用 adsprpcd-sensorspd 失败"

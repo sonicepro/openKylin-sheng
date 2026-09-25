@@ -86,6 +86,11 @@ log "已设置 $USERNAME 与 root 的密码"
 # 4) 网络
 # ---------------------------------------------------------------------------
 log "启用 NetworkManager"
+# 保险：若 NM 单元不在（可能被裁掉），先从源补装
+if [[ ! -f /lib/systemd/system/NetworkManager.service && ! -f /usr/lib/systemd/system/NetworkManager.service ]]; then
+  warn "未找到 NetworkManager.service，尝试补装 network-manager"
+  apt_install_best_effort network-manager
+fi
 if [[ -f /lib/systemd/system/NetworkManager.service || -f /usr/lib/systemd/system/NetworkManager.service ]]; then
   # openKylin 镜像里 NM 可能被 mask 或从未启用；unmask + enable，并给手动软链兜底
   systemctl unmask NetworkManager.service 2>/dev/null || true
@@ -102,6 +107,11 @@ fi
 # ---------------------------------------------------------------------------
 case "$DESKTOP" in
   UKUI)
+    # 保险：若根本没有会话文件（可能被裁掉），从源补装
+    if ! ls /usr/share/xsessions/*.desktop /usr/share/wayland-sessions/*.desktop >/dev/null 2>&1; then
+      warn "未发现任何会话文件，尝试补装 ukui-session-manager / ukui-session-wayland"
+      apt_install ukui-session-manager || apt_install ukui-session-wayland || warn "补装会话包失败"
+    fi
     if [[ "$AUTOLOGIN" == "true" ]]; then
       # 探测可用的 UKUI 会话名（名字可能带 ukui/kylin 前缀，扫目录最稳）
       SESSION=""
