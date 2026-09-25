@@ -20,7 +20,7 @@ openKylin 公开的 arm64 软件归档**不完整**：`ukui-desktop-environment`
 - 桌面 rootfs 解包后约 **31 GiB**（含大量 kylin AI 模型），openKylin 自带压缩后约 **7.2 GiB**。因此：按 ISO 的 `filesystem.size` 自动定 `rootfs.img` 大小；构建末尾默认用 **zstd 压缩**（约 4×，产物 `rootfs.img.zst`），刷写前 `zstd -d` 解压。
 - 解出的 rootfs 已是完整 openKylin 3.0 (huanghe) + UKUI 桌面（1880 个包），随后：
   - `05-de-live.sh`：清掉 casper/live 残留、屏蔽首启安装器、清空 fstab
-  - `30-device-packages.sh`：装 `linux-xiaomi-sheng` 等设备 deb
+  - `30-device-packages.sh`：先移除与固件包冲突的 `linux-firmware`，装必需设备 deb；`xiaomi-*` 可选功能装不上则跳过（如 `xiaomi-sheng-fingerprint` 需要更高的 `fprintd`/`libgusb2`）
   - `40-system-config.sh`：主机名/用户/locale/lightdm 自动登录/fstab/apt 源
   - `90-verify.sh`：硬校验
 - `rootfs_source=debootstrap` 的旧路径**保留但当前不可用**（待上游归档补齐再启用）。
