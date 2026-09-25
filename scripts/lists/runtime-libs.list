@@ -1,0 +1,13 @@
+# 上游 debian-sheng 显式预装的运行期库（与 ubuntu-sheng 相同）。
+# 本仓库把这些库的解析交给本地设备 deb 的 Depends，但显式预装能挡住
+# "某个下载来的 xiaomi-*.deb 声明了发行版已改名/不存在的包名" 这类不可预知失败。
+# 用 apt_install_list_best_effort 安装：整批失败会退回逐个安装，
+# 因此可安全地同时列出 t64 改名前后两种名字。
+libglib2.0-0t64
+libglib2.0-0
+libprotobuf-c1
+libqmi-glib5
+libmbim-glib4
+libyaml-0-2
+libgudev-1.0-0
+libpolkit-gobject-1-0

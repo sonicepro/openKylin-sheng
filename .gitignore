@@ -1,0 +1,22 @@
+# 构建产物
+*.img
+*.deb
+
+# 设备包构建中间目录
+build/
+deb-out/
+debs/
+linux/
+linux-xiaomi-sheng.deb
+Image.gz-dtb_sheng
+
+# boot.img / 内核中间产物
+boot.img
+
+# 镜像内构建脚本目录（若误入仓库）
+ok-build/
+
+# 编辑器 / 系统
+*.swp
+.DS_Store
+Thumbs.db

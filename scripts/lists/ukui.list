@@ -1,0 +1,9 @@
+# UKUI 桌面（openKylin 默认桌面环境，snap-free）
+#
+# ukui-desktop-environment 是 openKylin 的桌面元包（Provides: ukui），其依赖里
+# 已含 ukui-desktop-environment-core（会话/面板/控制中心/主题）与 ukui-tablet-desktop
+# （平板形态）。显示管理器 openKylin 用 lightdm + ukui-greeter（ukui-greeter
+# Provides: lightdm-greeter），元包不直接拉，需要显式安装。
+ukui-desktop-environment
+lightdm
+ukui-greeter
