@@ -10,11 +10,27 @@
 > ⚠️ 刷机有风险，操作需谨慎，一切后果自负。刷写步骤请阅读
 > [Xiaomi-pad-6s-pro-Linux 的安装指南](https://github.com/code002-2/Xiaomi-pad-6s-pro-Linux/blob/main/docs/安装指南.md)。
 
+## 现状与思路（重要）
+
+openKylin 公开的 arm64 软件归档**不完整**：`ukui-desktop-environment` 依赖闭包里的一批运行时库在 arm64 上缺失——nile (2.0) 缺 `libgtk-4-1`/`libjpeg-turbo8`/`librttopo1`/`librav1e0`/`libmutter-14-0` 等一大批（GTK4/GNOME 整条链），huanghe (3.0) 缺 `python3-watchdog`/`libbytesize1`/`libei1`/`libblosc1`/`python3-jaraco.*` 等十余个。逐个 pocket（main/updates/security/proposed/backports/cross/pty，amd64+arm64）都查过，确实没有。因此**用 debootstrap+apt 从零装不出 UKUI**。
+
+所以本项目默认 **`rootfs_source=image`**：直接取 openKylin 官方 arm64 **桌面 ISO** 里已经装好的 rootfs（`casper/filesystem.squashfs`），再叠加 sheng 设备包，不依赖 apt 去解析那套坏掉的依赖。
+
+- 默认镜像：`https://cdimage.openkylin.top/3.0/openKylin-Desktop-V3.0-20260905-arm64.iso`
+- 解出的 rootfs 已是完整 openKylin 3.0 (huanghe) + UKUI 桌面（1880 个包），随后：
+  - `05-de-live.sh`：清掉 casper/live 残留、屏蔽首启安装器、清空 fstab
+  - `30-device-packages.sh`：装 `linux-xiaomi-sheng` 等设备 deb
+  - `40-system-config.sh`：主机名/用户/locale/lightdm 自动登录/fstab/apt 源
+  - `90-verify.sh`：硬校验
+- `rootfs_source=debootstrap` 的旧路径**保留但当前不可用**（待上游归档补齐再启用）。
+
+因不是 `apt` 组装，镜像里的 openKylin 版本由 ISO 决定（当前 3.0 / huanghe）。
+
 ## 与 ubuntu-sheng 的差异
 
 | 维度 | ubuntu-sheng | openKylin-sheng |
 |---|---|---|
-| 基础引导 | `ubuntu-base` tarball 优先，mmdebstrap 兜底 | **debootstrap** 从 openKylin 归档引导（无官方 base tarball） |
+| 基础引导 | `ubuntu-base` tarball 优先，mmdebstrap 兜底 | **取官方 arm64 桌面 ISO 的 `casper/filesystem.squashfs`**（`rootfs_source=image`） |
 | 归档 | `archive.ubuntu.com` / `ports.ubuntu.com` | `archive.build.openkylin.top/openkylin/`（**直接含 arm64**） |
 | 版本代号 | resolute / stonking / questing | **nile (2.0) / huanghe (3.0) / yangtze (1.0)** |
 | 组件 | main restricted universe multiverse | **main cross pty** |
@@ -32,8 +48,10 @@ openKylin 2.0（nile）基础是 **Debian 13 系**（`base-files 13-ok2.2`、`sy
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| **openkylin_series** | `nile (2.0)` | `nile (2.0)` / `huanghe (3.0)` / `yangtze (1.0)` |
-| **desktop** | `UKUI` | `UKUI` / `server`（无图形界面） |
+| **rootfs_source** | `image` | `image` = 用官方镜像里已装好的 rootfs（推荐）；`debootstrap` = 从零引导（当前缺包不可用） |
+| **openkylin_iso_url** | `cdimage.openkylin.top/3.0/…arm64.iso` | `image` 模式要用的 openKylin arm64 桌面 ISO |
+| **openkylin_series** | `huanghe (3.0)` | 仅 `debootstrap` 模式使用 |
+| **desktop** | `UKUI` | `image` 模式固定为镜像自带 UKUI；`debootstrap` 模式可选 `UKUI` / `server` |
 | **autologin** | `true` | LightDM 自动登录 |
 | **username / hostname** | `user` / `xiaomi-sheng` | 仅允许字母数字与 `_ . -` |
 | **password** | *(空)* | 优先本输入项；留空用 Secret `ROOTFS_PASSWORD`；都空则 `password` |
@@ -44,7 +62,7 @@ openKylin 2.0（nile）基础是 **Debian 13 系**（`base-files 13-ok2.2`、`sy
 | **kernel_source** | `prebuilt` | `prebuilt` = 取 [ianchb/sm8550-mainline](https://github.com/ianchb/sm8550-mainline) 的 release；`custom_build` = 自行编译 |
 | **kernel_release** | `7.2.6` | `prebuilt` 取哪个 release（留空取最新） |
 | **firmware_repo / firmware_branch** | `ianchb/sheng-firmware` / `master` | 设备固件来源 |
-| **rootfs_size** | `10G` | 镜像初始大小（构建后收缩，首启 `x-systemd.growfs` 扩到分区实际大小） |
+| **rootfs_size** | `16G` | 镜像初始大小（构建后收缩，首启 `x-systemd.growfs` 扩到分区实际大小） |
 | **shrink_image** | `true` | 构建后 `e2fsck -fy` + `resize2fs -M` 收缩 |
 | **upload_artifacts** | `true` | 设为 `false` 只验证流程、不产出 Artifact |
 
@@ -55,17 +73,19 @@ scripts/
   common/distro-env.sh      # openKylin suite↔镜像↔密钥环 映射
   host/                     # 宿主阶段（在 arm64 runner 上跑）
     00-prepare-image.sh     #   建 rootfs.img 并挂载
-    01-bootstrap.sh         #   ★ debootstrap 引导 openKylin
+    01-bootstrap.sh         #   debootstrap 引导（debootstrap 模式）
+    05-fetch-rootfs.sh      #   ★ 从官方 ISO 解出 rootfs（image 模式，默认）
     02-mount-chroot.sh      #   挂载 /dev /proc /sys，拷脚本与 deb 入镜像
     03-umount-chroot.sh
     04-finalize-image.sh    #   收缩镜像、固定 UUID
     10-fetch-kernel.sh      #   prebuilt boot.img + 内核 deb
     11-make-bootimg.sh      #   custom_build 时本地生成 boot.img
   in-chroot/                # 镜像内阶段（chroot 执行）
-    10-base.sh              #   基础包
-    20-desktop.sh           #   ★ UKUI / server
-    30-device-packages.sh   #   安装 linux-xiaomi-sheng 等设备 deb
-    40-system-config.sh     #   ★ lightdm 自动登录 + locale + fstab
+    05-de-live.sh           #   ★ image 模式：清理 live/casper 残留
+    10-base.sh              #   基础包（debootstrap 模式）
+    20-desktop.sh           #   UKUI / server（debootstrap 模式）
+    30-device-packages.sh   #   ★ 安装 linux-xiaomi-sheng 等设备 deb
+    40-system-config.sh     #   ★ lightdm 自动登录 + locale + fstab + apt 源
     90-verify.sh            #   构建末尾硬校验
   lists/                    # 包列表（base / ukui / runtime-libs / plymouth）
   packages/                 # 设备 deb 的源码/打包脚本（复用 ubuntu-sheng）
@@ -79,17 +99,16 @@ scripts/
 **本地构建**（需 arm64 主机 + root + 联网）：
 
 ```bash
-sudo apt-get install -y debootstrap curl git e2fsprogs
+sudo apt-get install -y debootstrap curl git e2fsprogs squashfs-tools
 # 1) 先把设备包准备好放到 debs/（见 .github/workflows/_packages.yml 的各作业）
 #    并准备 boot.img（scripts/host/10-fetch-kernel.sh 需要 gh 已登录）
-# 2) 依次执行宿主脚本
-sudo scripts/host/00-prepare-image.sh rootfs.img 10G /mnt/rootfs
-sudo env DISTRO_SERIES=nile scripts/host/01-bootstrap.sh /mnt/rootfs
+# 2) 铺底 rootfs（image 模式，默认）
+sudo scripts/host/00-prepare-image.sh rootfs.img 16G /mnt/rootfs
+sudo scripts/host/05-fetch-rootfs.sh /mnt/rootfs
 sudo scripts/host/02-mount-chroot.sh /mnt/rootfs
 # 3) 写 /mnt/rootfs/root/build.env（见 rootfs.yml 的 Write Build Environment）
 # 4) chroot 执行镜像内脚本
-sudo chroot /mnt/rootfs /root/ok-build/in-chroot/10-base.sh
-sudo chroot /mnt/rootfs /root/ok-build/in-chroot/20-desktop.sh
+sudo chroot /mnt/rootfs /root/ok-build/in-chroot/05-de-live.sh
 sudo chroot /mnt/rootfs /root/ok-build/in-chroot/30-device-packages.sh
 sudo chroot /mnt/rootfs /root/ok-build/in-chroot/40-system-config.sh
 sudo chroot /mnt/rootfs /root/ok-build/in-chroot/90-verify.sh

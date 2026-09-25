@@ -2,28 +2,42 @@ name: Build RootFS (openKylin)
 
 # 为小米平板 6S Pro (sheng, SM8550) 构建 openKylin arm64 rootfs.img + boot.img
 #
-# 结构参照 code002-2/ubuntu-sheng：
-#   * 设备功能包构建抽到可复用工作流 .github/workflows/_packages.yml
-#   * 具体步骤放在 scripts/ 下（宿主 scripts/host、镜像内 scripts/in-chroot）
-#   * openKylin 与 Ubuntu 的差异都在 scripts/ 里注释说明（桌面 UKUI、显示管理器
-#     lightdm、引导用 debootstrap、归档与密钥环不同）
+# 结构参照 code002-2/ubuntu-sheng。openKylin 与 Ubuntu 的关键差异：
+#   * 公开的 openKylin arm64 软件归档**缺包**（缺 python3-watchdog / libbytesize1 /
+#     libei1 / libgtk-4-1 等），用 debootstrap+apt 装不出 UKUI 桌面。
+#   * 因此默认 ROOTFS_SOURCE=image：直接取 **openKylin 官方 arm64 桌面镜像**里
+#     已经装好的 rootfs（casper/filesystem.squashfs），再叠加 sheng 设备包。
+#   * ROOTFS_SOURCE=debootstrap 保留旧的从零引导路径（归档修好后可用）。
 #
-# 需要 arm64 runner（ubuntu-24.04-arm，与 ubuntu-sheng 相同）。
+# 需要 arm64 runner（ubuntu-24.04-arm）。
 on:
   workflow_dispatch:
     inputs:
-      openkylin_series:
-        description: 'openKylin 版本'
+      rootfs_source:
+        description: 'rootfs 来源（image=用官方镜像里的 rootfs，推荐；debootstrap=从零引导）'
         required: true
         type: choice
-        default: 'nile (2.0)'
+        default: 'image'
         options:
-          - 'nile (2.0)'
+          - 'image'
+          - 'debootstrap'
+      openkylin_series:
+        description: 'openKylin 版本（仅 debootstrap 模式使用）'
+        required: false
+        type: choice
+        default: 'huanghe (3.0)'
+        options:
           - 'huanghe (3.0)'
+          - 'nile (2.0)'
           - 'yangtze (1.0)'
+      openkylin_iso_url:
+        description: 'image 模式下要使用的 openKylin arm64 桌面 ISO 地址'
+        required: false
+        type: string
+        default: 'https://cdimage.openkylin.top/3.0/openKylin-Desktop-V3.0-20260905-arm64.iso'
       desktop:
-        description: '桌面环境（UKUI 为 openKylin 默认；server 为无图形界面）'
-        required: true
+        description: '桌面环境（image 模式固定为镜像自带的 UKUI；debootstrap 模式可选 UKUI/server）'
+        required: false
         type: choice
         default: 'UKUI'
         options:
@@ -126,7 +140,7 @@ on:
         description: 'rootfs.img 初始大小（构建后会收缩，首启自动扩容）'
         required: false
         type: string
-        default: '10G'
+        default: '16G'
       shrink_image:
         description: '构建后收缩镜像（e2fsck + resize2fs -M）'
         required: false
@@ -171,7 +185,6 @@ jobs:
           IN_PASSWORD: ${{ inputs.password }}
           SECRET_PASSWORD: ${{ secrets.ROOTFS_PASSWORD }}
         run: |
-          # 密码优先级：password 输入项 > ROOTFS_PASSWORD secret > 默认 password。
           if [ -n "$IN_PASSWORD" ]; then
             echo "::add-mask::$IN_PASSWORD"
             PASSWORD="$IN_PASSWORD"
@@ -197,8 +210,6 @@ jobs:
               exit 1
             fi
           fi
-
-          # 自由文本输入会被写进镜像内的 /root/build.env 并参与 shell 片段拼接，做白名单校验
           case "${{ inputs.custom_partition }}" in
             "") : ;;
             *[!a-zA-Z0-9_-]*) echo "::error::custom_partition 只允许字母数字与 _ -（PARTLABEL 名）"; exit 1 ;;
@@ -210,14 +221,17 @@ jobs:
             ""|*[!a-zA-Z0-9.-]*) echo "::error::hostname 只允许字母数字与 . -"; exit 1 ;;
           esac
           case "${{ inputs.rootfs_size }}" in
-            ""|*[!0-9GgMmKk]*) echo "::error::rootfs_size 只允许形如 10G / 8192M 的取值"; exit 1 ;;
+            ""|*[!0-9GgMmKk]*) echo "::error::rootfs_size 只允许形如 16G / 8192M 的取值"; exit 1 ;;
           esac
 
       - name: Parse Arguments
         id: parse
         run: |
           SERIES="${{ inputs.openkylin_series }}"
-          SERIES="${SERIES%% *}"      # 取 'nile (2.0)' 的 'nile'
+          SERIES="${SERIES%% *}"
+          if [ "${{ inputs.rootfs_source }}" = "image" ]; then
+            SERIES="huanghe"   # 官方 arm64 桌面镜像当前为 3.0(huanghe)
+          fi
 
           QUIET="false"
           if [ "${{ inputs.quiet_boot }}" = "true" ] && [ "${{ inputs.desktop }}" != "server" ]; then
@@ -253,12 +267,12 @@ jobs:
             echo "desktop_slug=${SLUG}"
           } >> "$GITHUB_OUTPUT"
 
-          echo "openKylin $SERIES / ${{ inputs.desktop }} / 分区 $LABEL / quiet=$QUIET"
+          echo "source=${{ inputs.rootfs_source }} / openKylin $SERIES / 分区 $LABEL / quiet=$QUIET"
 
       - name: Install Host Tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq debootstrap curl git e2fsprogs
+          sudo apt-get install -y -qq debootstrap curl git e2fsprogs squashfs-tools
 
       - name: "[Prebuilt] Download Kernel & boot.img"
         if: inputs.kernel_source != 'custom_build'
@@ -349,7 +363,17 @@ jobs:
           chmod +x scripts/host/00-prepare-image.sh
           sudo bash scripts/host/00-prepare-image.sh rootfs.img "${{ inputs.rootfs_size }}" "$ROOTFS_MOUNT"
 
-      - name: Bootstrap openKylin Base
+      - name: "[image] Extract openKylin rootfs from ISO"
+        if: inputs.rootfs_source == 'image'
+        env:
+          OPENKYLIN_ISO_URL: ${{ inputs.openkylin_iso_url }}
+          OPENKYLIN_ISO: ${{ github.workspace }}/openkylin.iso
+        run: |
+          chmod +x scripts/host/05-fetch-rootfs.sh
+          sudo -E bash scripts/host/05-fetch-rootfs.sh "$ROOTFS_MOUNT"
+
+      - name: "[debootstrap] Bootstrap openKylin Base"
+        if: inputs.rootfs_source == 'debootstrap'
         run: |
           chmod +x scripts/host/01-bootstrap.sh
           sudo env DISTRO_SERIES="${{ steps.parse.outputs.series }}" \
@@ -366,6 +390,7 @@ jobs:
         run: |
           sudo tee "$ROOTFS_MOUNT/root/build.env" >/dev/null <<EOF
           DISTRO_SERIES='${DISTRO_SERIES}'
+          ROOTFS_SOURCE='${{ inputs.rootfs_source }}'
           DESKTOP='${{ inputs.desktop }}'
           AUTOLOGIN='${{ inputs.autologin }}'
           USERNAME='${{ inputs.username }}'
@@ -380,10 +405,16 @@ jobs:
           echo "build.env 内容："
           sudo cat "$ROOTFS_MOUNT/root/build.env" | sed 's/^/    /'
 
+      - name: "[chroot] De-live rootfs"
+        if: inputs.rootfs_source == 'image'
+        run: sudo chroot "$ROOTFS_MOUNT" /root/ok-build/in-chroot/05-de-live.sh
+
       - name: "[chroot] Install Base Packages"
+        if: inputs.rootfs_source == 'debootstrap'
         run: sudo chroot "$ROOTFS_MOUNT" /root/ok-build/in-chroot/10-base.sh
 
       - name: "[chroot] Install Desktop"
+        if: inputs.rootfs_source == 'debootstrap'
         run: sudo chroot "$ROOTFS_MOUNT" /root/ok-build/in-chroot/20-desktop.sh
 
       - name: "[chroot] Install Device Packages"
@@ -451,7 +482,8 @@ jobs:
             echo ""
             echo "| 项 | 值 |"
             echo "|---|---|"
-            echo "| openKylin | ${{ inputs.openkylin_series }} |"
+            echo "| rootfs 来源 | ${{ inputs.rootfs_source }} |"
+            echo "| openKylin | ${{ steps.parse.outputs.series }} |"
             echo "| 桌面环境 | ${{ inputs.desktop }} |"
             echo "| 分区（PARTLABEL） | ${{ steps.parse.outputs.label }} |"
             echo "| 内核来源 | ${{ inputs.kernel_source }} |"

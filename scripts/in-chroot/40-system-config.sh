@@ -47,7 +47,7 @@ if [[ "$LANGUAGE" == "None (C.UTF-8)" ]]; then
   log "locale: 保持 C.UTF-8（跳过 locale-gen）"
 else
   log "生成 locale: $LANGUAGE"
-  apt_install locales
+  apt_install_best_effort locales
   sed -i 's/^# *\(en_US\.UTF-8\)/\1/' /etc/locale.gen
   esc="$(printf '%s' "$LANGUAGE" | sed 's/\./\\./g')"
   sed -i "s/^# *\(${esc}\)/\1/" /etc/locale.gen
@@ -152,6 +152,34 @@ if command -v systemd-sysusers >/dev/null 2>&1; then
   systemd-sysusers || warn "systemd-sysusers 返回非 0（系统用户可能不完整）"
 else
   warn "找不到 systemd-sysusers，跳过（设备上 systemd-sysusers.service 会兜底）"
+fi
+
+# ---------------------------------------------------------------------------
+# 6b) apt 源（与 openKylin 安装器 .kylin-post-actions 一致）
+#     设备上要能继续 apt 装包；live 镜像里的源可能不全，这里按官方安装器的写法补齐。
+#     仅在对应 keyring 存在时才写（避免写出无法验证的源）。
+# ---------------------------------------------------------------------------
+if [[ -f /usr/share/keyrings/openkylin-archive-keyring.gpg ]]; then
+  log "写入 openKylin apt 源（$DISTRO_SUITE + security + updates）"
+  install -d /etc/apt/sources.list.d
+  cat > /etc/apt/sources.list.d/openkylin.sources <<EOF
+Types: deb
+URIs: http://archive.build.openkylin.top/openkylin/
+Suites: ${DISTRO_SUITE} ${DISTRO_SUITE}-security ${DISTRO_SUITE}-updates
+Components: main cross pty
+Signed-By: /usr/share/keyrings/openkylin-archive-keyring.gpg
+EOF
+else
+  warn "缺少 openkylin-archive-keyring.gpg，保留镜像原有 apt 源不动"
+fi
+if [[ -f /usr/share/keyrings/openkylin-archive-anything-keyring.gpg ]]; then
+  cat > /etc/apt/sources.list.d/openkylin-anything.sources <<EOF
+Types: deb
+URIs: http://ppa.build.openkylin.top/kylinsoft/anything3.0/openkylin/
+Suites: ${DISTRO_SUITE}
+Components: main
+Signed-By: /usr/share/keyrings/openkylin-archive-anything-keyring.gpg
+EOF
 fi
 
 # ---------------------------------------------------------------------------

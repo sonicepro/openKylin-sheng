@@ -41,7 +41,9 @@ case "${LC_ALL:-}" in
 esac
 export LANG="${LANG:-C.UTF-8}"
 
-: "${DISTRO_SERIES:=nile}"
+# 默认 3.0（huanghe）：其 arm64 归档比 2.0（nile）完整得多；
+# 但即便是 huanghe，公开归档也缺少量包 → 默认走 ROOTFS_SOURCE=image（见下）。
+: "${DISTRO_SERIES:=huanghe}"
 
 case "$DISTRO_SERIES" in
   nile|2.0)     DISTRO_SUITE="nile";    DEBOOTSTRAP_SCRIPT="trixie" ;;
@@ -59,6 +61,15 @@ export OPENKYLIN_KEYRING_URL="${OPENKYLIN_KEYRING_URL:-http://archive.build.open
 # 需要 Signed-By 时指向镜像内安装的 keyring 包路径
 export OPENKYLIN_KEYRING_PATH="${OPENKYLIN_KEYRING_PATH:-/usr/share/keyrings/openkylin-archive-keyring.gpg}"
 export OPENKYLIN_COMPONENTS="${OPENKYLIN_COMPONENTS:-main cross pty}"
+
+# ── 选项 C：直接用 openKylin 官方镜像里的 rootfs ────────────────────────────
+# ROOTFS_SOURCE=image：宿主 05-fetch-rootfs.sh 下载官方 arm64 桌面 ISO，解出
+#   casper/filesystem.squashfs 铺进镜像。这样做绕开了公开归档缺包的问题——
+#   镜像里已经是"装好的"完整 UKUI 桌面，不需要 apt 再解析依赖。
+# ROOTFS_SOURCE=debootstrap：旧的从零引导路径（nile/huanghe 都会因缺包失败，
+#   仅保留供归档修好后使用）。
+export ROOTFS_SOURCE="${ROOTFS_SOURCE:-image}"
+export OPENKYLIN_ISO_URL="${OPENKYLIN_ISO_URL:-https://cdimage.openkylin.top/3.0/openKylin-Desktop-V3.0-20260905-arm64.iso}"
 
 log()  { printf '[%s] %s\n' "${0##*/}" "$*"; }
 warn() { printf '[%s] 警告: %s\n' "${0##*/}" "$*" >&2; }
