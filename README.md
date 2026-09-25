@@ -63,13 +63,11 @@ openKylin 2.0（nile）基础是 **Debian 13 系**（`base-files 13-ok2.2`、`sy
 | **kernel_source** | `prebuilt` | `prebuilt` = 取 [ianchb/sm8550-mainline](https://github.com/ianchb/sm8550-mainline) 的 release；`custom_build` = 自行编译 |
 | **kernel_release** | `7.2.6` | `prebuilt` 取哪个 release（留空取最新） |
 | **firmware_repo / firmware_branch** | `ianchb/sheng-firmware` / `master` | 设备固件来源 |
-| **rootfs_size** | 自动（回退 `36G`） | image 模式按 ISO 的 `filesystem.size` 自动算（约 31 GiB + 余量）；构建后收缩，首启 `x-systemd.growfs` 扩容 |
 | **compress_image** | `zstd` | 构建后压缩 `rootfs.img`（`zstd` 快 / `xz` 更小，约 4×）；刷写前需先解压：`zstd -d` 或 `xz -d` |
 | **shrink_image** | `true` | 构建后 `e2fsck -fy` + `resize2fs -M` 收缩 |
 | **upload_artifacts** | `true` | 上传到 Actions Artifact（临时，14 天） |
 | **create_release** | `true` | 发布到 GitHub Release（持久）。因单附件上限 2 GiB，大镜像会自动分片 `*.part-*` |
 | **release_tag** | *(自动)* | 留空则用 `openkylin-<系列>-<桌面>-<分区>`；同名 Release 则更新附件 |
-| **release_prerelease** | `true` | 标记为 pre-release（实验性端口建议开） |
 
 ## 目录结构
 

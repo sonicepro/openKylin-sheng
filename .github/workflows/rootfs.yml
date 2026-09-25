@@ -136,11 +136,6 @@ on:
         required: false
         type: string
         default: 'master'
-      rootfs_size:
-        description: 'rootfs.img 初始大小（image 模式会自动按解包大小算，此项为回退/覆盖）'
-        required: false
-        type: string
-        default: '36G'
       shrink_image:
         description: '构建后收缩镜像（e2fsck + resize2fs -M）'
         required: false
@@ -170,12 +165,6 @@ on:
         required: false
         type: string
         default: ''
-      release_prerelease:
-        description: '标记为 pre-release（实验性端口建议开启）'
-        required: false
-        type: boolean
-        default: true
-
 permissions:
   contents: write   # 发布 Release 需要
   actions: read
@@ -254,10 +243,6 @@ jobs:
           case "${{ inputs.hostname }}" in
             ""|*[!a-zA-Z0-9.-]*) echo "::error::hostname 只允许字母数字与 . -"; exit 1 ;;
           esac
-          case "${{ inputs.rootfs_size }}" in
-            ""|*[!0-9GgMmKk]*) echo "::error::rootfs_size 只允许形如 16G / 8192M 的取值"; exit 1 ;;
-          esac
-
       - name: Parse Arguments
         id: parse
         run: |
@@ -405,7 +390,7 @@ jobs:
         if: inputs.rootfs_source == 'debootstrap'
         run: |
           chmod +x scripts/host/00-prepare-image.sh
-          sudo bash scripts/host/00-prepare-image.sh rootfs.img "${{ inputs.rootfs_size }}" "$ROOTFS_MOUNT"
+          sudo bash scripts/host/00-prepare-image.sh rootfs.img 36G "$ROOTFS_MOUNT"
 
       - name: "[debootstrap] Bootstrap openKylin Base"
         if: inputs.rootfs_source == 'debootstrap'
@@ -549,8 +534,7 @@ jobs:
           set -euo pipefail
           TAG="${{ inputs.release_tag }}"
           [ -n "$TAG" ] || TAG="openkylin-${{ steps.parse.outputs.series }}-${{ steps.parse.outputs.desktop_slug }}-${{ steps.parse.outputs.label }}"
-          PRE=""
-          [ "${{ inputs.release_prerelease }}" = "true" ] && PRE="--prerelease" || true
+          PRE="--prerelease"   # 实验性端口固定标为 pre-release
           echo "Release tag: $TAG"
           cat > /tmp/notes.md <<'EOF'
           为小米平板 6S Pro（sheng / SM8550）构建的 openKylin arm64 镜像。
