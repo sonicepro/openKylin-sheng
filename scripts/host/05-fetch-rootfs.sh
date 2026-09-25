@@ -92,6 +92,13 @@ log "unsquashfs → $MOUNT（这一步较慢，几分钟）"
 unsquashfs -f -d "$MOUNT" "$SQUASH"
 
 [[ -x "$MOUNT/usr/bin/apt-get" ]] || die "解包后的 rootfs 缺少 apt-get（镜像结构异常）"
+
+# 备份会话目录：设备包安装（apt 解析器）可能误删会话文件，40-system-config 会按需恢复
+install -d "$MOUNT/root/ok-build/session-backup"
+cp -a "$MOUNT/usr/share/xsessions"        "$MOUNT/root/ok-build/session-backup/" 2>/dev/null || true
+cp -a "$MOUNT/usr/share/wayland-sessions" "$MOUNT/root/ok-build/session-backup/" 2>/dev/null || true
+log "会话: xsessions=[$(ls "$MOUNT/usr/share/xsessions" 2>/dev/null | tr '\n' ' ')] wayland=[$(ls "$MOUNT/usr/share/wayland-sessions" 2>/dev/null | tr '\n' ' ')]"
+
 log "rootfs 就绪："
 cat "$MOUNT/etc/os-release" 2>/dev/null | sed 's/^/    /' || true
 printf '    顶层目录: %s\n' "$(ls "$MOUNT" | tr '\n' ' ')"

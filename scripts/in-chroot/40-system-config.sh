@@ -107,10 +107,13 @@ fi
 # ---------------------------------------------------------------------------
 case "$DESKTOP" in
   UKUI)
-    # 保险：若根本没有会话文件（可能被裁掉），从源补装
+    # 保险：若会话文件缺失（设备包安装可能误删），先从备份恢复，再尝试重装
     if ! ls /usr/share/xsessions/*.desktop /usr/share/wayland-sessions/*.desktop >/dev/null 2>&1; then
-      warn "未发现任何会话文件，尝试补装 ukui-session-manager / ukui-session-wayland"
-      apt_install ukui-session-manager || apt_install ukui-session-wayland || warn "补装会话包失败"
+      warn "未发现任何会话文件，尝试从备份恢复 + 重装会话包"
+      cp -a /root/ok-build/session-backup/xsessions/. /usr/share/xsessions/ 2>/dev/null || true
+      cp -a /root/ok-build/session-backup/wayland-sessions/. /usr/share/wayland-sessions/ 2>/dev/null || true
+      apt_install --reinstall ukui-session-manager 2>/dev/null \
+        || apt_install ukui-session-manager || apt_install ukui-session-wayland || warn "补装会话包失败"
     fi
     if [[ "$AUTOLOGIN" == "true" ]]; then
       # 探测可用的 UKUI 会话名（名字可能带 ukui/kylin 前缀，扫目录最稳）
