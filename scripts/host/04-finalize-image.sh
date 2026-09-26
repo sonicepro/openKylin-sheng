@@ -117,3 +117,13 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "| 压缩产物 | ${COMPRESSED:-无} |"
   } >> "$GITHUB_STEP_SUMMARY"
 fi
+
+# ---------------------------------------------------------------------------
+# 释放磁盘：压缩成功后删除原始 rootfs.img（约 31 GiB）。
+#   后续 Release/上传只用压缩产物；raw 上传仅在 compress_image=none 时发生，
+#   那时 COMPRESSED 为空，不会走到这里。本地想同时保留 raw 可设 KEEP_RAW_IMAGE=true。
+# ---------------------------------------------------------------------------
+if [[ -n "$COMPRESSED" && "${KEEP_RAW_IMAGE:-false}" != "true" ]]; then
+  log "压缩已完成，删除原始镜像以释放磁盘: $IMAGE（$(du -h --apparent-size "$IMAGE" 2>/dev/null | cut -f1)）"
+  rm -f "$IMAGE"
+fi

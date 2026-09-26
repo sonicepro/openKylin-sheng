@@ -200,11 +200,19 @@ jobs:
 
       - name: Free Disk Space
         # 官方桌面 ISO 的 rootfs 解包后约 31 GiB，加上中间产物，标准 runner 的
-        # 默认磁盘不够。删掉预装的大块工具链腾出约 25 GiB。
+        # 默认磁盘不够。删掉预装的大块工具链、swapfile 与 Docker 数据腾出空间。
+        # 注意：这一步的力度直接决定后面「压缩 / 分片」阶段会不会爆盘。
         run: |
+          # swapfile（通常约 4 GiB）：先关 swap 再删
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile 2>/dev/null || true
+          # Docker / containerd 数据（本构建不用容器）
+          sudo rm -rf /var/lib/docker /var/lib/containerd 2>/dev/null || true
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
-          sudo rm -rf /usr/local/lib/node_modules /opt/az /usr/local/aws-cli 2>/dev/null || true
+          sudo rm -rf /usr/local/lib/node_modules /opt/az /usr/local/aws-cli \
+                      /usr/local/share/chromium /usr/share/swc /opt/microsoft \
+                      /usr/local/.ghcup /usr/local/share/powershell 2>/dev/null || true
           sudo apt-get clean
           df -h /
 
@@ -390,6 +398,14 @@ jobs:
         run: |
           chmod +x scripts/host/05-fetch-rootfs.sh
           sudo -E bash scripts/host/05-fetch-rootfs.sh "$ROOTFS_MOUNT"
+
+      - name: "[image] Free ISO (~7.4 GiB)"
+        # ISO 已在 05-fetch-rootfs.sh 里解包进 rootfs.img，之后整条流水线都不再需要它。
+        # 不删的话这 ~7.4 GiB 会一直占着根分区，压缩/分片阶段极易撑爆磁盘。
+        if: inputs.rootfs_source == 'image'
+        run: |
+          rm -f "${{ github.workspace }}/openkylin.iso"
+          df -h /
 
       - name: "[debootstrap] Create & Mount RootFS Image"
         if: inputs.rootfs_source == 'debootstrap'
